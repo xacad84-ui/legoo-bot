@@ -19,9 +19,9 @@ from telegram.ext import (
 )
 
 
-# ============================================================
-# ENVIRONMENT VARIABLES
-# ============================================================
+# =========================================================
+# SETTINGS
+# =========================================================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 REBRICKABLE_API_KEY = os.getenv("REBRICKABLE_API_KEY")
@@ -32,15 +32,18 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
 INVITE_CODE = os.getenv("INVITE_CODE", "LEGO2026")
 
 
-# ============================================================
+# =========================================================
 # DATABASE
-# ============================================================
+# =========================================================
 
 def db_connect():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is missing.")
 
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    return psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row
+    )
 
 
 def init_db():
@@ -79,9 +82,9 @@ def init_db():
         conn.commit()
 
 
-# ============================================================
-# ACCESS CONTROL
-# ============================================================
+# =========================================================
+# ACCESS / ADMIN
+# =========================================================
 
 def is_admin(user_id):
     return user_id == ADMIN_USER_ID
@@ -91,13 +94,10 @@ def get_access_user(user_id):
     with db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT *
-                FROM access_users
-                WHERE user_id = %s
-                """,
+                "SELECT * FROM access_users WHERE user_id = %s",
                 (user_id,),
             )
+
             return cur.fetchone()
 
 
@@ -119,12 +119,14 @@ def is_pending(user_id):
 def create_access_request(user):
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 INSERT INTO access_users
                     (user_id, first_name, username, approved, pending)
                 VALUES
                     (%s, %s, %s, FALSE, TRUE)
+
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     first_name = EXCLUDED.first_name,
@@ -144,12 +146,14 @@ def create_access_request(user):
 def approve_user(user_id):
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 INSERT INTO access_users
                     (user_id, approved, pending)
                 VALUES
                     (%s, TRUE, FALSE)
+
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     approved = TRUE,
@@ -164,6 +168,7 @@ def approve_user(user_id):
 def reject_user(user_id):
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 UPDATE access_users
@@ -177,6 +182,68 @@ def reject_user(user_id):
         conn.commit()
 
 
+# =========================================================
+# WELCOME / HELP MENU
+# =========================================================
+
+def welcome_message():
+    return (
+        "🎉 <b>Η πρόσβασή σου εγκρίθηκε!</b>\n\n"
+        "🧱 Καλώς ήρθες στο LEGO Bot!\n\n"
+
+        "📋 <b>Τι μπορείς να κάνεις:</b>\n\n"
+
+        "🔢 <b>Αναζήτηση set</b>\n"
+        "Γράψε απλά τον αριθμό του LEGO set.\n"
+        "Παράδειγμα:\n"
+        "<code>10316</code>\n\n"
+
+        "💰 <b>Έλεγχος τιμής</b>\n"
+        "Μπορείς να γράψεις το set μαζί με την τιμή που βρήκες.\n\n"
+        "Παραδείγματα:\n"
+        "<code>10316 420</code>\n"
+        "<code>10316 500 yen</code>\n"
+        "<code>10316 €420</code>\n"
+        "<code>10316 $450</code>\n\n"
+
+        "Το bot θα μετατρέψει την τιμή σε EUR, "
+        "θα τη συγκρίνει με το RRP και θα σου πει αν είναι "
+        "καλή ή κακή προσφορά.\n\n"
+
+        "🧱 <b>Collection</b>\n"
+        "<code>/add 10316</code> — προσθήκη set\n"
+        "<code>/remove 10316</code> — αφαίρεση set\n"
+        "<code>/collection</code> — εμφάνιση Collection\n"
+        "<code>/stats</code> — στατιστικά Collection\n\n"
+
+        "⭐ <b>Wishlist</b>\n"
+        "<code>/want 10316</code> — προσθήκη στο Wishlist\n"
+        "<code>/unwant 10316</code> — αφαίρεση από Wishlist\n"
+        "<code>/wishlist</code> — εμφάνιση Wishlist\n\n"
+
+        "🔎 <b>Αναζήτηση με λέξη</b>\n"
+        "<code>/search castle</code>\n"
+        "<code>/search batman</code>\n"
+        "<code>/search star wars</code>\n\n"
+
+        "🆔 <b>Το Telegram ID σου</b>\n"
+        "<code>/id</code>\n\n"
+
+        "🛒 Μέσα σε κάθε set θα βρίσκεις επίσης "
+        "συνδέσμους για LEGO, eBay και BrickLink.\n\n"
+
+        "🧱 Καλή συλλογή!"
+    )
+
+
+def admin_welcome_message():
+    return (
+        "👑 <b>Admin — LEGO Bot</b>\n\n"
+        "Το bot είναι έτοιμο και έχεις πλήρη πρόσβαση.\n\n"
+        + welcome_message()
+    )
+
+
 async def access_denied(update):
     if update.message:
         await update.message.reply_text(
@@ -185,31 +252,31 @@ async def access_denied(update):
         )
 
 
-# ============================================================
+# =========================================================
 # START
-# ============================================================
+# =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+async def start(update, context):
     user = update.effective_user
     user_id = user.id
 
+    # ADMIN
     if is_admin(user_id):
         await update.message.reply_text(
-            "👑 Καλώς ήρθες Admin!\n\n"
-            "Το LEGO bot είναι έτοιμο."
+            admin_welcome_message(),
+            parse_mode="HTML",
         )
         return
 
-    # Already approved
+    # ALREADY APPROVED
     if has_access(user_id):
         await update.message.reply_text(
-            "👋 Καλώς ήρθες ξανά!\n\n"
-            "Μπορείς να χρησιμοποιήσεις το LEGO bot."
+            welcome_message(),
+            parse_mode="HTML",
         )
         return
 
-    # Check invite code
+    # NO INVITE LINK
     args = context.args
 
     if not args:
@@ -218,6 +285,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # CHECK INVITE CODE
     provided_code = args[0]
 
     if provided_code != INVITE_CODE:
@@ -226,14 +294,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Already waiting
+    # ALREADY WAITING
     if is_pending(user_id):
         await update.message.reply_text(
-            "⏳ Το αίτημά σου έχει ήδη σταλεί στον διαχειριστή.\n"
+            "⏳ Το αίτημά σου έχει ήδη σταλεί στον διαχειριστή.\n\n"
             "Περίμενε την έγκρισή του."
         )
         return
 
+    # CREATE REQUEST
     create_access_request(user)
 
     username_text = (
@@ -243,7 +312,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     admin_message = (
-        "👤 Νέο αίτημα πρόσβασης!\n\n"
+        "👤 <b>Νέο αίτημα πρόσβασης!</b>\n\n"
         f"Όνομα: {user.first_name or 'Άγνωστο'}\n"
         f"Username: {username_text}\n"
         f"ID: {user.id}"
@@ -266,6 +335,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=ADMIN_USER_ID,
             text=admin_message,
+            parse_mode="HTML",
             reply_markup=keyboard,
         )
     except Exception:
@@ -277,14 +347,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ============================================================
-# ACCESS CALLBACKS
-# ============================================================
+# =========================================================
+# APPROVE / REJECT
+# =========================================================
 
-async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+async def access_callback(update, context):
     query = update.callback_query
-    await query.answer()
 
     if not is_admin(query.from_user.id):
         await query.answer(
@@ -293,51 +361,82 @@ async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    await query.answer()
+
     data = query.data
 
+    # APPROVE
     if data.startswith("approve:"):
+
         user_id = int(data.split(":")[1])
 
         approve_user(user_id)
 
         await query.edit_message_text(
-            query.message.text + "\n\n✅ ΕΓΚΡΙΘΗΚΕ"
+            query.message.text
+            + "\n\n"
+            + "✅ <b>ΕΓΚΡΙΘΗΚΕ</b>\n\n"
+            + "📋 <b>Commands που μπορείς να χρησιμοποιήσεις:</b>\n\n"
+            + "🔢 Γράψε <code>10316</code> για πληροφορίες set\n"
+            + "💰 Γράψε <code>10316 420</code> για έλεγχο τιμής\n"
+            + "💰 <code>10316 500 yen</code>\n"
+            + "💰 <code>10316 €420</code>\n"
+            + "💰 <code>10316 $450</code>\n\n"
+            + "🧱 <code>/add 10316</code> — Collection\n"
+            + "🗑️ <code>/remove 10316</code> — αφαίρεση\n"
+            + "📦 <code>/collection</code> — Collection\n"
+            + "📊 <code>/stats</code> — στατιστικά\n\n"
+            + "⭐ <code>/want 10316</code> — Wishlist\n"
+            + "🗑️ <code>/unwant 10316</code> — αφαίρεση\n"
+            + "⭐ <code>/wishlist</code> — Wishlist\n\n"
+            + "🔎 <code>/search castle</code>\n"
+            + "🔎 <code>/search batman</code>\n"
+            + "🔎 <code>/search star wars</code>\n\n"
+            + "🆔 <code>/id</code> — Telegram ID",
+            parse_mode="HTML",
         )
 
+        # SEND WELCOME TO APPROVED USER
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=(
-                    "🎉 Η πρόσβασή σου εγκρίθηκε!\n\n"
-                    "Καλώς ήρθες στο LEGO bot. 🧱"
-                ),
+                text=welcome_message(),
+                parse_mode="HTML",
             )
         except Exception:
             pass
 
+    # REJECT
     elif data.startswith("reject:"):
+
         user_id = int(data.split(":")[1])
 
         reject_user(user_id)
 
         await query.edit_message_text(
-            query.message.text + "\n\n❌ ΑΠΟΡΡΙΦΘΗΚΕ"
+            query.message.text
+            + "\n\n"
+            + "❌ <b>ΑΠΟΡΡΙΦΘΗΚΕ</b>",
+            parse_mode="HTML",
         )
 
         try:
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "❌ Το αίτημά σου για πρόσβαση απορρίφθηκε."
+                    "❌ <b>Το αίτημά σου για πρόσβαση απορρίφθηκε.</b>\n\n"
+                    "Δεν μπορείς να χρησιμοποιήσεις το LEGO Bot "
+                    "χωρίς έγκριση από τον διαχειριστή."
                 ),
+                parse_mode="HTML",
             )
         except Exception:
             pass
 
 
-# ============================================================
-# GENERAL HELPERS
-# ============================================================
+# =========================================================
+# SET NUMBER
+# =========================================================
 
 def normalize_set_number(text):
     return text.strip().upper().replace("-1", "")
@@ -347,7 +446,8 @@ def normalize_text(text):
     text = text.lower()
 
     text = "".join(
-        c for c in unicodedata.normalize("NFD", text)
+        c
+        for c in unicodedata.normalize("NFD", text)
         if unicodedata.category(c) != "Mn"
     )
 
@@ -356,11 +456,13 @@ def normalize_text(text):
     return " ".join(text.split())
 
 
+# =========================================================
+# REBRICKABLE
+# =========================================================
+
 def get_set_info(set_number):
-    url = (
-        f"https://rebrickable.com/api/v3/lego/sets/"
-        f"{set_number}-1/"
-    )
+
+    url = f"https://rebrickable.com/api/v3/lego/sets/{set_number}-1/"
 
     headers = {
         "Authorization": f"key {REBRICKABLE_API_KEY}"
@@ -382,7 +484,12 @@ def get_set_info(set_number):
         return None
 
 
+# =========================================================
+# BRICKSET
+# =========================================================
+
 def get_brickset_info(set_number):
+
     url = "https://brickset.com/api/v3.asmx/getSets"
 
     params = {
@@ -423,7 +530,12 @@ def get_brickset_info(set_number):
         return None
 
 
+# =========================================================
+# RRP
+# =========================================================
+
 def get_rrp(brickset):
+
     if not brickset:
         return None
 
@@ -432,9 +544,11 @@ def get_rrp(brickset):
     if isinstance(lego_com, dict):
 
         for country in ["DE", "UK", "US"]:
+
             country_data = lego_com.get(country)
 
             if isinstance(country_data, dict):
+
                 price = country_data.get("retailPrice")
 
                 if price is not None:
@@ -449,6 +563,7 @@ def get_rrp(brickset):
         "rrp",
         "price",
     ]:
+
         value = brickset.get(field)
 
         if value is not None:
@@ -460,12 +575,16 @@ def get_rrp(brickset):
     return None
 
 
+# =========================================================
+# STATUS
+# =========================================================
+
 def get_status(brickset):
+
     if not brickset:
         return "❓ Άγνωστο"
 
     released = brickset.get("released")
-
     launch_date = brickset.get("launchDate")
     exit_date = brickset.get("exitDate")
 
@@ -473,6 +592,7 @@ def get_status(brickset):
         return "🔵 Δεν έχει κυκλοφορήσει ακόμα"
 
     if exit_date:
+
         try:
             exit_dt = datetime.strptime(
                 exit_date[:10],
@@ -481,6 +601,7 @@ def get_status(brickset):
 
             if exit_dt < datetime.now():
                 return "🔴 Retired"
+
         except Exception:
             pass
 
@@ -491,6 +612,7 @@ def get_status(brickset):
 
 
 def format_date(date_value):
+
     if not date_value:
         return None
 
@@ -506,9 +628,9 @@ def format_date(date_value):
         return date_value
 
 
-# ============================================================
-# CURRENCY / PRICE
-# ============================================================
+# =========================================================
+# CURRENCIES
+# =========================================================
 
 CURRENCY_ALIASES = {
     "€": "EUR",
@@ -548,9 +670,11 @@ CURRENCY_ALIASES = {
 
 
 def find_currency(text):
+
     normalized = normalize_text(text)
 
     for alias, code in CURRENCY_ALIASES.items():
+
         if alias in normalized:
             return code
 
@@ -566,6 +690,7 @@ def find_currency(text):
 
 
 def extract_price(text):
+
     currency = find_currency(text)
 
     cleaned = text
@@ -573,8 +698,9 @@ def extract_price(text):
     for alias in sorted(
         CURRENCY_ALIASES.keys(),
         key=len,
-        reverse=True,
+        reverse=True
     ):
+
         cleaned = re.sub(
             re.escape(alias),
             " ",
@@ -591,7 +717,11 @@ def extract_price(text):
         return None, currency
 
     try:
-        value = float(numbers[-1].replace(",", "."))
+
+        value = float(
+            numbers[-1].replace(",", ".")
+        )
+
         return value, currency
 
     except Exception:
@@ -599,13 +729,15 @@ def extract_price(text):
 
 
 def convert_to_eur(amount, currency):
+
     if currency == "EUR":
         return amount
 
     try:
+
         url = (
-            f"https://api.frankfurter.dev/v2/rate/"
-            f"{currency}/EUR"
+            f"https://api.frankfurter.dev/v2/"
+            f"rate/{currency}/EUR"
         )
 
         response = requests.get(
@@ -630,6 +762,7 @@ def convert_to_eur(amount, currency):
 
 
 def price_rating(percentage):
+
     if percentage >= 30:
         return "🟢 Εξαιρετική τιμή!"
 
@@ -648,20 +781,27 @@ def price_rating(percentage):
     return "🔴 Αρκετά πάνω από το RRP"
 
 
-# ============================================================
-# BUTTONS
-# ============================================================
+# =========================================================
+# SET BUTTONS
+# =========================================================
 
 def set_buttons(set_number):
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
                 "🛒 LEGO",
-                url=f"https://www.lego.com/en-gb/search?q={set_number}"
+                url=(
+                    "https://www.lego.com/en-gb/search"
+                    f"?q={set_number}"
+                ),
             ),
             InlineKeyboardButton(
                 "🛍️ eBay",
-                url=f"https://www.ebay.com/sch/i.html?_nkw=LEGO+{set_number}"
+                url=(
+                    "https://www.ebay.com/sch/i.html"
+                    f"?_nkw=LEGO+{set_number}"
+                ),
             ),
         ],
         [
@@ -670,32 +810,32 @@ def set_buttons(set_number):
                 url=(
                     "https://www.bricklink.com/v2/catalog/"
                     f"catalogitem.page?S={set_number}-1"
-                )
+                ),
             ),
             InlineKeyboardButton(
                 "📊 Price Guide",
                 url=(
-                    "https://www.bricklink.com/catalogPG.asp?"
-                    f"S={set_number}-1&ColorID=0"
-                )
+                    "https://www.bricklink.com/catalogPG.asp"
+                    f"?S={set_number}-1&ColorID=0"
+                ),
             ),
         ],
         [
             InlineKeyboardButton(
                 "➕ Collection",
-                callback_data=f"addcollection:{set_number}"
+                callback_data=f"addcollection:{set_number}",
             ),
             InlineKeyboardButton(
                 "⭐ Wishlist",
-                callback_data=f"addwishlist:{set_number}"
+                callback_data=f"addwishlist:{set_number}",
             ),
         ],
     ])
 
 
-# ============================================================
+# =========================================================
 # SET INFORMATION
-# ============================================================
+# =========================================================
 
 async def send_set_information(message, set_number):
 
@@ -728,9 +868,15 @@ async def send_set_information(message, set_number):
     ]
 
     if year:
+
         try:
+
             age = datetime.now().year - int(year)
-            lines.append(f"⏳ Ηλικία: {age} χρόνια")
+
+            lines.append(
+                f"⏳ Ηλικία: {age} χρόνια"
+            )
+
         except Exception:
             pass
 
@@ -759,30 +905,37 @@ async def send_set_information(message, set_number):
     rrp = get_rrp(brickset)
 
     if rrp is not None:
+
         lines.append(
             f"💶 RRP: €{rrp:.2f}"
         )
 
         if pieces:
+
             try:
+
                 per_piece = rrp / int(pieces)
 
                 lines.append(
                     f"🧮 RRP / κομμάτι: €{per_piece:.2f}"
                 )
+
             except Exception:
                 pass
 
     text = "\n".join(lines)
 
     if image_url:
+
         await message.reply_photo(
             photo=image_url,
             caption=text,
             parse_mode="HTML",
             reply_markup=set_buttons(set_number),
         )
+
     else:
+
         await message.reply_text(
             text,
             parse_mode="HTML",
@@ -790,41 +943,59 @@ async def send_set_information(message, set_number):
         )
 
 
-# ============================================================
-# ADD / REMOVE COLLECTION
-# ============================================================
+# =========================================================
+# COLLECTION
+# =========================================================
 
 def add_collection(user_id, set_number):
+
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
-                INSERT INTO collections (user_id, set_number)
-                VALUES (%s, %s)
+                INSERT INTO collections
+                    (user_id, set_number)
+
+                VALUES
+                    (%s, %s)
+
                 ON CONFLICT DO NOTHING
                 """,
-                (user_id, set_number),
+                (
+                    user_id,
+                    set_number,
+                ),
             )
+
         conn.commit()
 
 
 def remove_collection(user_id, set_number):
+
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 DELETE FROM collections
                 WHERE user_id = %s
-                AND set_number = %s
+                  AND set_number = %s
                 """,
-                (user_id, set_number),
+                (
+                    user_id,
+                    set_number,
+                ),
             )
+
         conn.commit()
 
 
 def get_collection(user_id):
+
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 SELECT set_number
@@ -837,44 +1008,65 @@ def get_collection(user_id):
 
             rows = cur.fetchall()
 
-    return [row["set_number"] for row in rows]
+    return [
+        row["set_number"]
+        for row in rows
+    ]
 
 
-# ============================================================
-# ADD / REMOVE WISHLIST
-# ============================================================
+# =========================================================
+# WISHLIST
+# =========================================================
 
 def add_wishlist(user_id, set_number):
+
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
-                INSERT INTO wishlist (user_id, set_number)
-                VALUES (%s, %s)
+                INSERT INTO wishlist
+                    (user_id, set_number)
+
+                VALUES
+                    (%s, %s)
+
                 ON CONFLICT DO NOTHING
                 """,
-                (user_id, set_number),
+                (
+                    user_id,
+                    set_number,
+                ),
             )
+
         conn.commit()
 
 
 def remove_wishlist(user_id, set_number):
+
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 DELETE FROM wishlist
                 WHERE user_id = %s
-                AND set_number = %s
+                  AND set_number = %s
                 """,
-                (user_id, set_number),
+                (
+                    user_id,
+                    set_number,
+                ),
             )
+
         conn.commit()
 
 
 def get_wishlist(user_id):
+
     with db_connect() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 SELECT set_number
@@ -887,12 +1079,15 @@ def get_wishlist(user_id):
 
             rows = cur.fetchall()
 
-    return [row["set_number"] for row in rows]
+    return [
+        row["set_number"]
+        for row in rows
+    ]
 
 
-# ============================================================
-# COMMANDS
-# ============================================================
+# =========================================================
+# COMMAND: /ADD
+# =========================================================
 
 async def add_command(update, context):
 
@@ -906,9 +1101,12 @@ async def add_command(update, context):
         )
         return
 
-    set_number = normalize_set_number(context.args[0])
+    set_number = normalize_set_number(
+        context.args[0]
+    )
 
     if not get_set_info(set_number):
+
         await update.message.reply_text(
             "❌ Δεν βρήκα αυτό το LEGO set."
         )
@@ -924,6 +1122,10 @@ async def add_command(update, context):
     )
 
 
+# =========================================================
+# COMMAND: /REMOVE
+# =========================================================
+
 async def remove_command(update, context):
 
     if not has_access(update.effective_user.id):
@@ -936,7 +1138,9 @@ async def remove_command(update, context):
         )
         return
 
-    set_number = normalize_set_number(context.args[0])
+    set_number = normalize_set_number(
+        context.args[0]
+    )
 
     remove_collection(
         update.effective_user.id,
@@ -947,6 +1151,10 @@ async def remove_command(update, context):
         f"🗑️ Το {set_number} αφαιρέθηκε από τη Collection."
     )
 
+
+# =========================================================
+# COMMAND: /WANT
+# =========================================================
 
 async def want_command(update, context):
 
@@ -960,9 +1168,12 @@ async def want_command(update, context):
         )
         return
 
-    set_number = normalize_set_number(context.args[0])
+    set_number = normalize_set_number(
+        context.args[0]
+    )
 
     if not get_set_info(set_number):
+
         await update.message.reply_text(
             "❌ Δεν βρήκα αυτό το LEGO set."
         )
@@ -978,6 +1189,10 @@ async def want_command(update, context):
     )
 
 
+# =========================================================
+# COMMAND: /UNWANT
+# =========================================================
+
 async def unwant_command(update, context):
 
     if not has_access(update.effective_user.id):
@@ -990,7 +1205,9 @@ async def unwant_command(update, context):
         )
         return
 
-    set_number = normalize_set_number(context.args[0])
+    set_number = normalize_set_number(
+        context.args[0]
+    )
 
     remove_wishlist(
         update.effective_user.id,
@@ -1001,6 +1218,10 @@ async def unwant_command(update, context):
         f"🗑️ Το {set_number} αφαιρέθηκε από το Wishlist."
     )
 
+
+# =========================================================
+# COMMAND: /COLLECTION
+# =========================================================
 
 async def collection_command(update, context):
 
@@ -1013,6 +1234,7 @@ async def collection_command(update, context):
     )
 
     if not sets:
+
         await update.message.reply_text(
             "🧱 Η Collection σου είναι άδεια."
         )
@@ -1023,11 +1245,16 @@ async def collection_command(update, context):
     )
 
     for set_number in sets:
+
         await send_set_information(
             update.message,
             set_number,
         )
 
+
+# =========================================================
+# COMMAND: /WISHLIST
+# =========================================================
 
 async def wishlist_command(update, context):
 
@@ -1040,6 +1267,7 @@ async def wishlist_command(update, context):
     )
 
     if not sets:
+
         await update.message.reply_text(
             "⭐ Το Wishlist σου είναι άδειο."
         )
@@ -1050,11 +1278,16 @@ async def wishlist_command(update, context):
     )
 
     for set_number in sets:
+
         await send_set_information(
             update.message,
             set_number,
         )
 
+
+# =========================================================
+# COMMAND: /STATS
+# =========================================================
 
 async def stats_command(update, context):
 
@@ -1067,6 +1300,7 @@ async def stats_command(update, context):
     )
 
     if not sets:
+
         await update.message.reply_text(
             "📊 Η Collection σου είναι άδεια."
         )
@@ -1099,38 +1333,56 @@ async def stats_command(update, context):
         status = get_status(brickset)
 
         if pieces:
+
             try:
+
                 total_pieces += int(pieces)
 
-                if largest is None or int(pieces) > largest[1]:
+                if (
+                    largest is None
+                    or int(pieces) > largest[1]
+                ):
                     largest = (
                         set_number,
                         int(pieces),
                     )
+
             except Exception:
                 pass
 
         if rrp is not None:
+
             total_rrp += rrp
             rrp_count += 1
 
-            if expensive is None or rrp > expensive[1]:
+            if (
+                expensive is None
+                or rrp > expensive[1]
+            ):
                 expensive = (
                     set_number,
                     rrp,
                 )
 
         if year:
+
             try:
+
                 year_int = int(year)
 
-                if oldest is None or year_int < oldest[1]:
+                if (
+                    oldest is None
+                    or year_int < oldest[1]
+                ):
                     oldest = (
                         set_number,
                         year_int,
                     )
 
-                if newest is None or year_int > newest[1]:
+                if (
+                    newest is None
+                    or year_int > newest[1]
+                ):
                     newest = (
                         set_number,
                         year_int,
@@ -1157,28 +1409,38 @@ async def stats_command(update, context):
     ]
 
     if rrp_count:
+
         lines.append(
-            f"📈 Μέσο RRP / set: €{total_rrp / rrp_count:,.2f}"
+            f"📈 Μέσο RRP / set: "
+            f"€{total_rrp / rrp_count:,.2f}"
         )
 
     if oldest:
+
         lines.append(
-            f"👴 Παλαιότερο: {oldest[0]} ({oldest[1]})"
+            f"👴 Παλαιότερο: "
+            f"{oldest[0]} ({oldest[1]})"
         )
 
     if newest:
+
         lines.append(
-            f"🆕 Νεότερο: {newest[0]} ({newest[1]})"
+            f"🆕 Νεότερο: "
+            f"{newest[0]} ({newest[1]})"
         )
 
     if largest:
+
         lines.append(
-            f"🧩 Μεγαλύτερο: {largest[0]} ({largest[1]:,} κομμάτια)"
+            f"🧩 Μεγαλύτερο: "
+            f"{largest[0]} ({largest[1]:,} κομμάτια)"
         )
 
     if expensive:
+
         lines.append(
-            f"💰 Ακριβότερο: {expensive[0]} (€{expensive[1]:,.2f})"
+            f"💰 Ακριβότερο: "
+            f"{expensive[0]} (€{expensive[1]:,.2f})"
         )
 
     lines.extend([
@@ -1194,6 +1456,10 @@ async def stats_command(update, context):
     )
 
 
+# =========================================================
+# COMMAND: /ID
+# =========================================================
+
 async def id_command(update, context):
 
     await update.message.reply_text(
@@ -1201,15 +1467,16 @@ async def id_command(update, context):
     )
 
 
-# ============================================================
+# =========================================================
 # SEARCH
-# ============================================================
+# =========================================================
 
 async def search_sets(message, keyword):
 
     keyword = keyword.strip()
 
     if not keyword:
+
         await message.reply_text(
             "Χρήση: /search castle"
         )
@@ -1231,6 +1498,7 @@ async def search_sets(message, keyword):
     }
 
     try:
+
         response = requests.get(
             url,
             headers=headers,
@@ -1239,6 +1507,7 @@ async def search_sets(message, keyword):
         )
 
         if response.status_code != 200:
+
             await message.reply_text(
                 "❌ Πρόβλημα με την αναζήτηση."
             )
@@ -1247,6 +1516,7 @@ async def search_sets(message, keyword):
         data = response.json()
 
     except Exception:
+
         await message.reply_text(
             "❌ Δεν μπόρεσα να κάνω την αναζήτηση."
         )
@@ -1255,20 +1525,28 @@ async def search_sets(message, keyword):
     results = data.get("results", [])
 
     if not results:
+
         await message.reply_text(
             f"❌ Δεν βρήκα sets για: {keyword}"
         )
         return
 
     await message.reply_text(
-        f"🔎 Αποτελέσματα για: <b>{keyword}</b>",
+        f"🔎 Αποτελέσματα για: "
+        f"<b>{keyword}</b>",
         parse_mode="HTML",
     )
 
     for result in results:
 
-        set_number = result.get("set_num", "")
-        image_url = result.get("set_img_url")
+        set_number = result.get(
+            "set_num",
+            ""
+        )
+
+        image_url = result.get(
+            "set_img_url"
+        )
 
         if not set_number:
             continue
@@ -1283,11 +1561,14 @@ async def search_sets(message, keyword):
         ])
 
         if image_url:
+
             await message.reply_photo(
                 photo=image_url,
                 reply_markup=keyboard,
             )
+
         else:
+
             await message.reply_text(
                 "🧱",
                 reply_markup=keyboard,
@@ -1308,22 +1589,26 @@ async def search_command(update, context):
     )
 
 
-# ============================================================
-# CALLBACKS
-# ============================================================
+# =========================================================
+# BUTTON CALLBACKS
+# =========================================================
 
 async def button_callback(update, context):
 
     query = update.callback_query
-
     data = query.data
 
-    # Access approval/rejection
-    if data.startswith("approve:") or data.startswith("reject:"):
+    # APPROVE / REJECT
+    if (
+        data.startswith("approve:")
+        or data.startswith("reject:")
+    ):
+
         await access_callback(
             update,
             context,
         )
+
         return
 
     await query.answer()
@@ -1331,24 +1616,33 @@ async def button_callback(update, context):
     user_id = query.from_user.id
 
     if not has_access(user_id):
+
         await query.answer(
             "🔒 Δεν έχεις πρόσβαση.",
             show_alert=True,
         )
         return
 
+    # SEARCH RESULT -> SET INFO
     if data.startswith("setinfo:"):
 
-        set_number = data.split(":", 1)[1]
+        set_number = data.split(
+            ":",
+            1
+        )[1]
 
         await send_set_information(
             query.message,
             set_number,
         )
 
+    # ADD COLLECTION
     elif data.startswith("addcollection:"):
 
-        set_number = data.split(":", 1)[1]
+        set_number = data.split(
+            ":",
+            1
+        )[1]
 
         add_collection(
             user_id,
@@ -1359,9 +1653,13 @@ async def button_callback(update, context):
             "🧱 Προστέθηκε στη Collection!"
         )
 
+    # ADD WISHLIST
     elif data.startswith("addwishlist:"):
 
-        set_number = data.split(":", 1)[1]
+        set_number = data.split(
+            ":",
+            1
+        )[1]
 
         add_wishlist(
             user_id,
@@ -1373,22 +1671,23 @@ async def button_callback(update, context):
         )
 
 
-# ============================================================
-# NORMAL MESSAGE HANDLER
-# ============================================================
+# =========================================================
+# NORMAL TEXT / SET + PRICE
+# =========================================================
 
 async def handle_message(update, context):
 
     if not update.message:
         return
 
-    if not has_access(update.effective_user.id):
+    if not has_access(
+        update.effective_user.id
+    ):
         await access_denied(update)
         return
 
     text = update.message.text.strip()
 
-    # Numeric set search
     match = re.match(
         r"^(\d{4,6})(?:\s+(.+))?$",
         text,
@@ -1403,83 +1702,94 @@ async def handle_message(update, context):
     data = get_set_info(set_number)
 
     if not data:
+
         await update.message.reply_text(
             "❌ Δεν βρήκα αυτό το LEGO set."
         )
         return
 
+    # SHOW SET INFORMATION
     await send_set_information(
         update.message,
         set_number,
     )
 
-    # Price comparison
-    if price_text:
+    # NO PRICE
+    if not price_text:
+        return
 
-        price, currency = extract_price(
-            price_text
-        )
+    # EXTRACT PRICE
+    price, currency = extract_price(
+        price_text
+    )
 
-        if price is None:
-            return
+    if price is None:
+        return
 
-        brickset = get_brickset_info(
-            set_number
-        )
+    brickset = get_brickset_info(
+        set_number
+    )
 
-        rrp = get_rrp(brickset)
+    rrp = get_rrp(brickset)
 
-        if rrp is None:
-            await update.message.reply_text(
-                "💰 Δεν βρήκα διαθέσιμο RRP για σύγκριση."
-            )
-            return
-
-        eur_price = convert_to_eur(
-            price,
-            currency,
-        )
-
-        if eur_price is None:
-            await update.message.reply_text(
-                "❌ Δεν μπόρεσα να μετατρέψω το νόμισμα σε EUR."
-            )
-            return
-
-        difference = (
-            (rrp - eur_price) / rrp
-        ) * 100
-
-        rating = price_rating(
-            difference
-        )
+    if rrp is None:
 
         await update.message.reply_text(
-            "💰 <b>Σύγκριση τιμής</b>\n\n"
-            f"Τιμή που έδωσες: "
-            f"{price:.2f} {currency}\n"
-            f"Σε EUR: €{eur_price:.2f}\n"
-            f"RRP: €{rrp:.2f}\n"
-            f"Διαφορά: {difference:+.1f}%\n\n"
-            f"{rating}",
-            parse_mode="HTML",
+            "💰 Δεν βρήκα διαθέσιμο RRP για σύγκριση."
         )
+        return
 
+    # CONVERT TO EUR
+    eur_price = convert_to_eur(
+        price,
+        currency,
+    )
 
-# ============================================================
-# ERROR HANDLER
-# ============================================================
+    if eur_price is None:
 
-async def error_handler(update, context):
-    print(
-        "ERROR:",
-        context.error,
+        await update.message.reply_text(
+            "❌ Δεν μπόρεσα να μετατρέψω "
+            "το νόμισμα σε EUR."
+        )
+        return
+
+    # CALCULATE DIFFERENCE
+    difference = (
+        (rrp - eur_price)
+        / rrp
+    ) * 100
+
+    rating = price_rating(
+        difference
+    )
+
+    await update.message.reply_text(
+        "💰 <b>Σύγκριση τιμής</b>\n\n"
+        f"Τιμή που έδωσες: "
+        f"{price:.2f} {currency}\n"
+        f"Σε EUR: €{eur_price:.2f}\n"
+        f"RRP: €{rrp:.2f}\n"
+        f"Διαφορά: {difference:+.1f}%\n\n"
+        f"{rating}",
+        parse_mode="HTML",
     )
 
 
-# ============================================================
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(update, context):
+
+    print(
+        "ERROR:",
+        context.error
+    )
+
+
+# =========================================================
 # MAIN
-# ============================================================
+# =========================================================
 
 def main():
 
@@ -1500,58 +1810,95 @@ def main():
             "ADMIN_USER_ID is missing."
         )
 
+    # CREATE DATABASE TABLES
     init_db()
 
+    # CREATE BOT
     app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
         .build()
     )
 
+    # COMMANDS
     app.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     app.add_handler(
-        CommandHandler("id", id_command)
+        CommandHandler(
+            "id",
+            id_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("add", add_command)
+        CommandHandler(
+            "add",
+            add_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("remove", remove_command)
+        CommandHandler(
+            "remove",
+            remove_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("collection", collection_command)
+        CommandHandler(
+            "collection",
+            collection_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("want", want_command)
+        CommandHandler(
+            "want",
+            want_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("unwant", unwant_command)
+        CommandHandler(
+            "unwant",
+            unwant_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("wishlist", wishlist_command)
+        CommandHandler(
+            "wishlist",
+            wishlist_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("stats", stats_command)
+        CommandHandler(
+            "stats",
+            stats_command
+        )
     )
 
     app.add_handler(
-        CommandHandler("search", search_command)
+        CommandHandler(
+            "search",
+            search_command
+        )
     )
 
+    # BUTTONS
     app.add_handler(
-        CallbackQueryHandler(button_callback)
+        CallbackQueryHandler(
+            button_callback
+        )
     )
 
+    # NORMAL TEXT
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -1559,9 +1906,14 @@ def main():
         )
     )
 
-    app.add_error_handler(error_handler)
+    # ERRORS
+    app.add_error_handler(
+        error_handler
+    )
 
-    print("LEGO Bot started.")
+    print(
+        "LEGO Bot started."
+    )
 
     app.run_polling()
 
